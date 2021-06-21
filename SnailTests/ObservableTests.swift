@@ -1029,4 +1029,53 @@ class ObservableTests: XCTestCase {
         one.on(.done)
         XCTAssertTrue(isDone)
     }
+
+    func testNoThreadlock() {
+        class TestObject {
+            let disposer = Disposer()
+
+            init(variable: Variable<Bool>) {
+                variable.asObservable().subscribe()
+                .add(to: disposer)
+            }
+        }
+
+        let subject = Variable(true)
+        let disposer = Disposer()
+
+        subject.asObservable().subscribe(onNext: { _ in
+            _ = TestObject(variable: subject)
+        })
+        .add(to: disposer)
+
+        subject.value = true
+    }
+
+    func testNoThreadlock2() {
+        class TestObject {
+            let disposer = Disposer()
+            private let variable: Variable<Bool>
+
+            init(variable: Variable<Bool>) {
+                self.variable = variable
+
+                self.variable.asObservable().subscribe(onNext: { _ in
+                    if let firstSubscriber = variable.subject.subscribers.first {
+                        self.variable.subject.removeSubscriber(subscriber: firstSubscriber)
+                    }
+                })
+                .add(to: disposer)
+            }
+        }
+
+        let subject = Variable(true)
+        let disposer = Disposer()
+
+        subject.asObservable().subscribe(onNext: { _ in
+            _ = TestObject(variable: subject)
+        })
+        .add(to: disposer)
+
+        subject.value = true
+    }
 }

@@ -6,7 +6,7 @@ import Dispatch
 public class Observable<T>: ObservableType {
     private var isStopped: Int32 = 0
     private var stoppedEvent: Event<T>?
-    private var subscribers: [Subscriber<T>] = []
+    private(set) var subscribers: [Subscriber<T>] = []
     private let subscribersQueue = DispatchQueue(label: "snail-observable-queue", attributes: .concurrent)
 
     public init() {}
@@ -28,7 +28,7 @@ public class Observable<T>: ObservableType {
             return subscriber
         }
 
-        subscribersQueue.async(flags: .barrier) {
+        subscribersQueue.sync {
             self.subscribers.append(subscriber)
         }
 
@@ -42,17 +42,13 @@ public class Observable<T>: ObservableType {
                 return
             }
 
-            subscribersQueue.sync {
-                self.subscribers.forEach {
-                    notify(subscriber: $0, event: event)
-                }
+            self.subscribers.forEach {
+                notify(subscriber: $0, event: event)
             }
         case .error, .done:
             if OSAtomicCompareAndSwap32Barrier(0, 1, &isStopped) {
-                subscribersQueue.sync {
-                    self.subscribers.forEach {
-                        notify(subscriber: $0, event: event)
-                    }
+                self.subscribers.forEach {
+                    notify(subscriber: $0, event: event)
                 }
                 stoppedEvent = event
             }
@@ -69,7 +65,7 @@ public class Observable<T>: ObservableType {
     }
 
     public func removeSubscribers() {
-        subscribersQueue.async(flags: .barrier) {
+        subscribersQueue.sync {
             self.subscribers.removeAll()
         }
     }
@@ -80,9 +76,7 @@ public class Observable<T>: ObservableType {
                 return
             }
 
-            subscribersQueue.async(flags: .barrier) {
-                self.subscribers.remove(at: index)
-            }
+            self.subscribers.remove(at: index)
         }
     }
 
