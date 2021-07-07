@@ -6,8 +6,8 @@ import Dispatch
 public class Observable<T>: ObservableType {
     private var isStopped: Int32 = 0
     private var stoppedEvent: Event<T>?
-    private var subscribers: [Subscriber<T>] = []
-    private let subscribersQueue = DispatchQueue(label: "snail-observable-queue", attributes: .concurrent)
+    private(set) var subscribers: [Subscriber<T>] = []
+    private let subscribersQueue = DispatchQueue(label: "snail-observable-queue")
 
     public init() {}
 
@@ -21,14 +21,14 @@ public class Observable<T>: ObservableType {
         }
     }
 
-    @discardableResult public func subscribe(queue: DispatchQueue? = nil, onNext: ((T) -> Void)? = nil, onError: ((Error) -> Void)? = nil, onDone: (() -> Void)? = nil) -> Subscriber<T> {
+    public func subscribe(queue: DispatchQueue? = nil, onNext: ((T) -> Void)? = nil, onError: ((Error) -> Void)? = nil, onDone: (() -> Void)? = nil) -> Subscriber<T> {
         let subscriber = Subscriber(queue: queue, observable: self, handler: createHandler(onNext: onNext, onError: onError, onDone: onDone))
         if let stoppedEvent = stoppedEvent {
             notify(subscriber: subscriber, event: stoppedEvent)
             return subscriber
         }
 
-        subscribersQueue.async(flags: .barrier) {
+        subscribersQueue.sync {
             self.subscribers.append(subscriber)
         }
 
@@ -44,14 +44,14 @@ public class Observable<T>: ObservableType {
 
             subscribersQueue.sync {
                 self.subscribers.forEach {
-                    notify(subscriber: $0, event: event)
+                    self.notify(subscriber: $0, event: event)
                 }
             }
         case .error, .done:
             if OSAtomicCompareAndSwap32Barrier(0, 1, &isStopped) {
                 subscribersQueue.sync {
                     self.subscribers.forEach {
-                        notify(subscriber: $0, event: event)
+                        self.notify(subscriber: $0, event: event)
                     }
                 }
                 stoppedEvent = event
@@ -61,7 +61,7 @@ public class Observable<T>: ObservableType {
 
     public func on(_ queue: DispatchQueue) -> Observable<T> {
         let observable = Observable<T>()
-        subscribe(queue: queue,
+        _ = subscribe(queue: queue,
                   onNext: { observable.on(.next($0)) },
                   onError: { observable.on(.error($0)) },
                   onDone: { observable.on(.done) })
@@ -69,7 +69,7 @@ public class Observable<T>: ObservableType {
     }
 
     public func removeSubscribers() {
-        subscribersQueue.async(flags: .barrier) {
+        subscribersQueue.sync {
             self.subscribers.removeAll()
         }
     }
@@ -80,16 +80,14 @@ public class Observable<T>: ObservableType {
                 return
             }
 
-            subscribersQueue.async(flags: .barrier) {
-                self.subscribers.remove(at: index)
-            }
+            self.subscribers.remove(at: index)
         }
     }
 
     public func map<U>(_ transform: @escaping (T) -> U) -> Observable<U> {
         let transformed = Observable<U>()
 
-        subscribe(
+        _ = subscribe(
             onNext: { value in
                 transformed.on(.next(transform(value)))
             },
@@ -107,7 +105,7 @@ public class Observable<T>: ObservableType {
     public func flatMap<U>( _ transform: @escaping (T) -> Observable<U>) -> Observable<U> {
         let flatMapped = Observable<U>()
 
-        subscribe(
+        _ = subscribe(
             onNext: { value in
                 let obs = transform(value)
                 obs.forward(to: flatMapped)
@@ -126,7 +124,7 @@ public class Observable<T>: ObservableType {
     public func filter(_ isIncluded: @escaping (T) -> Bool) -> Observable<T> {
         let filtered = Observable<T>()
 
-        subscribe(
+        _ = subscribe(
             onNext: { value in
                 guard isIncluded(value) else { return }
                 filtered.on(.next(value))
@@ -155,7 +153,7 @@ public class Observable<T>: ObservableType {
 
         let semaphore = DispatchSemaphore(value: 0)
 
-        subscribe(onNext: { value in
+        _ = subscribe(onNext: { value in
             result = value
             semaphore.signal()
         }, onError: { err in
@@ -168,7 +166,7 @@ public class Observable<T>: ObservableType {
         if let timeout = timeout {
             _ = semaphore.wait(timeout: .now() + timeout)
         } else {
-            _ = semaphore.wait()
+            semaphore.wait()
         }
 
         if let error = error {
@@ -188,7 +186,7 @@ public class Observable<T>: ObservableType {
         scheduler.start()
 
         var next: T?
-        scheduler.observable.subscribe(onNext: {
+        _ = scheduler.observable.subscribe(onNext: {
             guard let nextValue = next else {
                 return
             }
@@ -196,7 +194,7 @@ public class Observable<T>: ObservableType {
             next = nil
         })
 
-        subscribe(onNext: { next = $0 }, onError: { observable.on(.error($0)) }, onDone: { observable.on(.done) })
+        _ = subscribe(onNext: { next = $0 }, onError: { observable.on(.error($0)) }, onDone: { observable.on(.done) })
         return observable
     }
 
@@ -205,7 +203,7 @@ public class Observable<T>: ObservableType {
         let scheduler = Scheduler(delay)
 
         var next: T?
-        scheduler.observable.subscribe(onNext: {
+        _ = scheduler.observable.subscribe(onNext: {
             guard let nextValue = next else {
                 return
             }
@@ -213,7 +211,7 @@ public class Observable<T>: ObservableType {
             next = nil
         })
 
-        subscribe(onNext: {
+        _ = subscribe(onNext: {
             next = $0
             scheduler.start()
         }, onError: { observable.on(.error($0)) }, onDone: { observable.on(.done) })
@@ -224,7 +222,7 @@ public class Observable<T>: ObservableType {
         let observable = Observable<T>()
         var count = first
 
-        subscribe(onNext: {
+        _ = subscribe(onNext: {
             if count == 0 {
                 observable.on(.next($0))
             }
@@ -241,7 +239,7 @@ public class Observable<T>: ObservableType {
         let observable = Observable<T>()
         var taken = 0
 
-        subscribe(onNext: {
+        _ = subscribe(onNext: {
             if taken < count {
                 observable.on(.next($0))
                 taken += 1
@@ -275,7 +273,7 @@ public class Observable<T>: ObservableType {
     }
 
     public func forward(to: Observable<T>) {
-        subscribe(onNext: {
+        _ = subscribe(onNext: {
             to.on(.next($0))
         }, onError: {
             to.on(.error($0))
@@ -313,7 +311,7 @@ public class Observable<T>: ObservableType {
             combined.on(.done)
         }
 
-        input1.subscribe(onNext: {
+        _ = input1.subscribe(onNext: {
             input1Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -323,7 +321,7 @@ public class Observable<T>: ObservableType {
             finishIfNeeded()
         })
 
-        input2.subscribe(onNext: {
+        _ = input2.subscribe(onNext: {
             input2Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -359,7 +357,7 @@ public class Observable<T>: ObservableType {
             combined.on(.done)
         }
 
-        input1.subscribe(onNext: {
+        _ = input1.subscribe(onNext: {
             input1Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -369,7 +367,7 @@ public class Observable<T>: ObservableType {
             finishIfNeeded()
         })
 
-        input2.subscribe(onNext: {
+        _ = input2.subscribe(onNext: {
             input2Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -379,7 +377,7 @@ public class Observable<T>: ObservableType {
             finishIfNeeded()
         })
 
-        input3.subscribe(onNext: {
+        _ = input3.subscribe(onNext: {
             input3Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -418,7 +416,7 @@ public class Observable<T>: ObservableType {
             combined.on(.done)
         }
 
-        input1.subscribe(onNext: {
+        _ = input1.subscribe(onNext: {
             input1Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -428,7 +426,7 @@ public class Observable<T>: ObservableType {
             finishIfNeeded()
         })
 
-        input2.subscribe(onNext: {
+        _ = input2.subscribe(onNext: {
             input2Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -438,7 +436,7 @@ public class Observable<T>: ObservableType {
             finishIfNeeded()
         })
 
-        input3.subscribe(onNext: {
+        _ = input3.subscribe(onNext: {
             input3Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -448,7 +446,7 @@ public class Observable<T>: ObservableType {
             finishIfNeeded()
         })
 
-        input4.subscribe(onNext: {
+        _ = input4.subscribe(onNext: {
             input4Result.value = $0
             triggerIfNeeded()
         }, onError: {
@@ -477,7 +475,7 @@ public class Observable<T>: ObservableType {
             combined.on(.next((value1, value2)))
         }
 
-        input1.subscribe(onNext: {
+        _ = input1.subscribe(onNext: {
             input1Result.append($0)
             triggerIfNeeded()
         }, onError: {
@@ -486,7 +484,7 @@ public class Observable<T>: ObservableType {
             combined.on(.done)
         })
 
-        input2.subscribe(onNext: {
+        _ = input2.subscribe(onNext: {
             input2Result.append($0)
             triggerIfNeeded()
         }, onError: {
