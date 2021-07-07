@@ -1055,7 +1055,7 @@ class ObservableTests: XCTestCase {
         subject.value = true
     }
 
-    func testNoThreadlock2() {
+    func testRemovingFirstSubscriberWithinSubscription_NoDeadlock() {
         class TestObject {
             let disposer = Disposer()
             private let variable: Variable<Bool>

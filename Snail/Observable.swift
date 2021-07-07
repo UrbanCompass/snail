@@ -7,7 +7,7 @@ public class Observable<T>: ObservableType {
     private var isStopped: Int32 = 0
     private var stoppedEvent: Event<T>?
     private(set) var subscribers: [Subscriber<T>] = []
-    private let subscribersQueue = DispatchQueue(label: "snail-observable-queue", attributes: .concurrent)
+    private let subscribersQueue = DispatchQueue(label: "snail-observable-queue")
 
     public init() {}
 
@@ -42,13 +42,17 @@ public class Observable<T>: ObservableType {
                 return
             }
 
-            self.subscribers.forEach {
-                notify(subscriber: $0, event: event)
+            subscribersQueue.sync {
+                self.subscribers.forEach {
+                    self.notify(subscriber: $0, event: event)
+                }
             }
         case .error, .done:
             if OSAtomicCompareAndSwap32Barrier(0, 1, &isStopped) {
-                self.subscribers.forEach {
-                    notify(subscriber: $0, event: event)
+                subscribersQueue.sync {
+                    self.subscribers.forEach {
+                        self.notify(subscriber: $0, event: event)
+                    }
                 }
                 stoppedEvent = event
             }

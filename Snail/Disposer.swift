@@ -7,8 +7,8 @@ public protocol DisposableType {
 }
 
 public class Disposer {
-    private(set) public var disposables: [DisposableType] = []
-    private let disposablesQueue = DispatchQueue(label: "snail-disposer-queue", attributes: .concurrent)
+    private(set) var disposables: [DisposableType] = []
+    private let disposablesQueue = DispatchQueue(label: "snail-disposer-queue")
 
     public init() {}
 
